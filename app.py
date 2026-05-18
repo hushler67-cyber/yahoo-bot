@@ -13,6 +13,13 @@ from selenium.webdriver.common.action_chains import ActionChains
 import os
 import ssl
 
+# ================== ENVIRONMENT VARIABLES (For Hosting) ==================
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+CHAT_ID = os.getenv('CHAT_ID')
+
+if not BOT_TOKEN or not CHAT_ID:
+    print("❌ ERROR: BOT_TOKEN or CHAT_ID not set in Environment Variables!")
+    exit(1)
 # ================== SSL BYPASS ==================
 try:
     _create_unverified_https_context = ssl._create_unverified_context
